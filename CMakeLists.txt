@@ -288,6 +288,7 @@ include_directories(
 link_directories(
   ${COMMON_LIB_DIRS}
 )
+link_libraries(stdc++fs)
 
 # add_subdirectory(3rdparty)
 add_subdirectory(src)
