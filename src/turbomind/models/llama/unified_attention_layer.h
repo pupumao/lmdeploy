@@ -171,6 +171,9 @@ private:
     T*     qkv_buf_2_{};
     T*     qkv_buf_3_{};
 
+    // For per-chn quant buffer
+    T*     out_proj_input_quant_{};
+
     float* partial_M_{};
     float* partial_L_{};
     float* partial_O_{};

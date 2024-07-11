@@ -3,6 +3,7 @@
 #pragma once
 
 #include "src/turbomind/kernels/gemm_s_f16/gemm_s4_f16.h"
+#include "src/turbomind/kernels/gemm_s_f8/gemm_s4_f8.h"
 #include "src/turbomind/models/llama/LlamaDenseWeight.h"
 #include "src/turbomind/models/llama/llama_decoder_kernels.h"
 #include "src/turbomind/models/llama/llama_kernels.h"
@@ -13,7 +14,6 @@
 #include <type_traits>
 
 namespace turbomind {
-
 template<typename T>
 class LlamaLinear {
 public:
@@ -24,9 +24,7 @@ public:
         kFusedAdd
     };
 
-    LlamaLinear(cublasMMWrapper* cublas_wrapper, cudaStream_t stream): cublas_wrapper_(cublas_wrapper), stream_(stream)
-    {
-    }
+    LlamaLinear(cublasMMWrapper* cublas_wrapper, cudaStream_t stream, IAllocator* allocator=nullptr): cublas_wrapper_(cublas_wrapper), stream_(stream), gemm_s4_f8_(allocator){}
 
     void forward(T*                         output_data,
                  const T*                   input_data,
@@ -78,6 +76,8 @@ public:
             case WeightType::kINT4:
                 forwardInt4(output_data, input_data, batch_size, weight, type);
                 break;
+            case WeightType::kW4AFP8:
+                forwardW4AFP8(output_data, input_data, batch_size, weight, type);
                 break;
             default:
                 FT_CHECK(0);
@@ -101,6 +101,26 @@ private:
                               1.0f,
                               type == kFusedAdd ? 1.0f : 0.0f);
         sync_check_cuda_error();
+    }
+
+    void forwardW4AFP8(T* output_data, const T* input_data, int batch_size, const LlamaDenseWeight<T>& weight, Type type){
+        if constexpr (std::is_same_v<T, half>) {
+            gemm_s4_f8_.Run(output_data,
+                            (const uint*)weight.kernel,
+                            input_data,
+                            weight.scales_and_zeros,
+                            nullptr,                    //TODO now sym mode. if need zero ptr, should be offset from weight.scales_and_zeros
+                            weight.alpha,
+                            weight.output_dims,
+                            batch_size,
+                            weight.input_dims,
+                            weight.group_size,
+                            stream_);
+            sync_check_cuda_error();
+        }
+        else {
+            FT_CHECK_WITH_INFO(0, "Not implemented");
+        }
     }
 
     void forwardInt4(T* output_data, const T* input_data, int batch_size, const LlamaDenseWeight<T>& weight, Type type)
@@ -133,6 +153,7 @@ private:
     cublasMMWrapper* cublas_wrapper_;
     cudaStream_t     stream_{};
     GemmS4F16        gemm_s4_f16_;
+    GemmS4F8         gemm_s4_f8_;
 };
 
 }  // namespace turbomind

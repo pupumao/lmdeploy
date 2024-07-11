@@ -22,13 +22,13 @@ if(${CUDA_VERSION_MAJOR} VERSION_GREATER_EQUAL "11")
   message("CUDA_VERSION ${CUDA_VERSION_MAJOR}.${CUDA_VERSION_MINOR} is greater or equal than 11.0, enable -DENABLE_BF16 flag")
 endif()
 
-# if((${CUDA_VERSION_MAJOR} VERSION_GREATER_EQUAL "11" AND ${CUDA_VERSION_MINOR} VERSION_GREATER_EQUAL "8") OR (${CUDA_VERSION_MAJOR} VERSION_GREATER_EQUAL "12"))
-#   add_definitions("-DENABLE_FP8")
-#   option(ENABLE_FP8 "ENABLE_FP8" OFF)
-#   if(ENABLE_FP8)
-#     message("CUDA_VERSION ${CUDA_VERSION_MAJOR}.${CUDA_VERSION_MINOR} is greater or equal than 11.8, enable -DENABLE_FP8 flag")
-#   endif()
-# endif()
+if((${CUDA_VERSION_MAJOR} VERSION_GREATER_EQUAL "11" AND ${CUDA_VERSION_MINOR} VERSION_GREATER_EQUAL "8") OR (${CUDA_VERSION_MAJOR} VERSION_GREATER_EQUAL "12"))
+  add_definitions("-DENABLE_FP8")
+  option(ENABLE_FP8 "ENABLE_FP8" ON)
+  if(ENABLE_FP8)
+    message("CUDA_VERSION ${CUDA_VERSION_MAJOR}.${CUDA_VERSION_MINOR} is greater or equal than 11.8, enable -DENABLE_FP8 flag")
+  endif()
+endif()
 
 set(CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake/Modules)
 
@@ -179,11 +179,16 @@ set(COMMON_HEADER_DIRS
   ${CUDA_PATH}/include
   ${CUTLASS_HEADER_DIR}
 )
+list(APPEND COMMON_HEADER_DIRS ./3rdparty/trt_llm_lib/include)
+list(APPEND COMMON_HEADER_DIRS ./3rdparty/trt_llm_lib/include/tensorrt_llm/cutlass_extensions/include/)
 message("-- COMMON_HEADER_DIRS: ${COMMON_HEADER_DIRS}")
 
 set(COMMON_LIB_DIRS
   ${CUDA_PATH}/lib64
 )
+list(APPEND COMMON_LIB_DIRS ./3rdparty/trt_llm_lib/lib/)
+message("-- COMMON_LIB_DIRS: ${COMMON_LIB_DIRS}")
+
 
 if (SPARSITY_SUPPORT)
   list(APPEND COMMON_HEADER_DIRS ${CUSPARSELT_PATH}/include)

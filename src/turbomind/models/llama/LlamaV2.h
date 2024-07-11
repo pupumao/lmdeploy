@@ -121,6 +121,7 @@ private:
     void forwardUnified(T*               out,
                         T*               decoder_output,
                         T*               decoder_input,
+                        T*               context_decoder_quant_buf,
                         void**           block_ptrs,
                         const int*       cu_block_cnts,
                         const int*       input_ids,

@@ -14,8 +14,9 @@ enum QuantPolicy
 {
     kNone = 0x00,
     // reserve 0x01 and 0x02 for backward compatibility
-    kReserve1 = 0x01,
+    kGEMMW4AFP8 = 0x01,
     kReserve2 = 0x02,
+    kGEMMQUANT = 0x03,
     // quantize cache kv
     kCacheKVInt8 = 0x08,
     kCacheKVInt4 = 0x04,

@@ -234,6 +234,7 @@ template<typename T>
 void LlamaV2<T>::forwardUnified(T*               out,
                                 T*               decoder_output,
                                 T*               decoder_input,
+                                T*               context_decoder_quant_buf,
                                 void**           block_ptrs,
                                 const int*       cu_block_cnts,
                                 const int*       input_ids,
@@ -279,6 +280,7 @@ void LlamaV2<T>::forwardUnified(T*               out,
     const size_t bsz   = dc_batch_size + pf_batch_size;
 
     TensorMap inputs{{"decoder_input", {MEMORY_GPU, dtype, {token_num, hidden_units_}, decoder_input}},
+                     {"decoder_quant_buf", {MEMORY_GPU, dtype, {token_num, hidden_units_}, context_decoder_quant_buf}},
                      {"output_norm_weight", {MEMORY_GPU, dtype, {hidden_units_}, weights_->output_norm_weight}},
                      {"h_q_len", {MEMORY_CPU, TYPE_INT32, {bsz}, h_input_length}},
                      {"h_k_len", {MEMORY_CPU, TYPE_INT32, {bsz}, h_context_length}},

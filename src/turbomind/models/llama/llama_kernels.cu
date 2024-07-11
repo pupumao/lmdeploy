@@ -133,6 +133,9 @@ void invokeAddResidual(T* out, const T* in, int m, int n, cudaStream_t stream)
 
 template void invokeAddResidual(float*, const float*, int, int, cudaStream_t);
 template void invokeAddResidual(half*, const half*, int, int, cudaStream_t);
+#ifdef ENABLE_BF16
+template void invokeAddResidual(__nv_bfloat16*, const __nv_bfloat16*, int, int, cudaStream_t);
+#endif
 
 // ids [seq_len, batch_size]
 // input_ids [batch_size, max_input_len]

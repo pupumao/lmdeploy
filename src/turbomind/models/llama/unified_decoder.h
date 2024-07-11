@@ -29,6 +29,7 @@ protected:
     size_t num_layer_;
     size_t hidden_units_;
     float  rmsnorm_eps_;
+    int    quant_policy_;
 
     NcclParam tensor_para_;
 
@@ -85,6 +86,7 @@ public:
         hidden_units_(head_num * size_per_head),
         num_layer_(num_layer),
         rmsnorm_eps_(rmsnorm_eps),
+        quant_policy_(quant_policy),
         tensor_para_(tensor_para),
         dtype_(getTensorType<T>())
     {

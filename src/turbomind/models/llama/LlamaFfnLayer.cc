@@ -23,6 +23,8 @@
 #include "src/turbomind/models/llama/llama_utils.h"
 #include "src/turbomind/utils/anomaly_handler.h"
 #include "src/turbomind/utils/nvtx_utils.h"
+#include "src/turbomind/kernels/quant_kernels.h"
+
 
 namespace turbomind {
 
@@ -36,6 +38,13 @@ void LlamaFfnLayer<T>::allocateBuffer(size_t                     token_num,
     size_t sz_inter     = (inter->lora.r > 0) ? sz + sz / inter_size_ * inter->lora.r : sz;
     inter_buf_          = (T*)allocator_->reMalloc(inter_buf_, sz_inter, false);
     gating_buf_         = (T*)allocator_->reMalloc(gating_buf_, sz_gate, false);
+
+    if (this->quant_policy_ & QuantPolicy::kGEMMW4AFP8) {
+        gating_buf_quant_dst_ =
+            (T*)this->allocator_->reMalloc(gating_buf_quant_dst_, sizeof(__nv_fp8_e4m3) * token_num * this->inter_size_, false);
+        // output_gemm_per_token_scale_ =
+        //     (float*)this->allocator_->reMalloc(output_gemm_per_token_scale_, sizeof(float) * token_num, false);
+    }
     is_allocate_buffer_ = true;
 }
 
@@ -45,6 +54,10 @@ void LlamaFfnLayer<T>::freeBuffer()
     if (is_allocate_buffer_) {
         allocator_->free((void**)&inter_buf_);
         allocator_->free((void**)&gating_buf_);
+        if (this->quant_policy_ & QuantPolicy::kGEMMW4AFP8) {
+            this->allocator_->free((void**)&gating_buf_quant_dst_);
+            // this->allocator_->free((void**)&output_gemm_per_token_scale_);
+        }
         is_allocate_buffer_ = false;
     }
 }
@@ -124,7 +137,21 @@ void LlamaFfnLayer<T>::forward(TensorMap*               output_tensors,
 
     {  // w2(x)
         NvtxScope scope("w2");
-        linear_.forward(ffn_output_data, gating_buf_, num_token, weights->output, LlamaLinear<T>::kGemm, lora_mask);
+        if (this->quant_policy_ & QuantPolicy::kGEMMW4AFP8) {
+            invokeDynamicPerChnQuantization(gating_buf_,
+                                            (__nv_fp8_e4m3*)gating_buf_quant_dst_,
+                                            num_token,
+                                            this->inter_size_,
+                                            const_cast<LlamaFfnWeight<T>*>(weights)->output.input_scales_per_channel,
+                                            this->stream_);
+            linear_.forward(ffn_output_data, gating_buf_quant_dst_, num_token, weights->output, LlamaLinear<T>::kGemm, lora_mask);
+        }
+        else {
+            linear_.forward(ffn_output_data, gating_buf_, num_token, weights->output, LlamaLinear<T>::kGemm, lora_mask);
+        }
+
+        // NvtxScope scope("w2");
+        // linear_.forward(ffn_output_data, gating_buf_, num_token, weights->output, LlamaLinear<T>::kGemm, lora_mask);
     }
 
     count_and_fix(ffn_output_data, num_token * weights->output.output_dims, Concat("w2", layer_id), 3);

@@ -30,7 +30,8 @@ enum class WeightType : int
     kFP8,  // not supported yet
     kBF16,
     kINT8,
-    kINT4
+    kINT4,
+    kW4AFP8
 };
 
 inline size_t getBitSize(WeightType type)
@@ -47,6 +48,7 @@ inline size_t getBitSize(WeightType type)
         case WeightType::kINT8:
             return 8;
         case WeightType::kINT4:
+        case WeightType::kW4AFP8:
             return 4;
     }
     return 0;
@@ -84,6 +86,8 @@ struct LlamaDenseWeight {
     T*         bias;
     T*         scales_and_zeros;
     int        group_size;
+    T*         input_scales_per_channel;
+    float      alpha;
 };
 
 template<typename T>

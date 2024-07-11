@@ -55,7 +55,8 @@ void UnifiedDecoder<T>::initialize(const LlamaAttentionParams& attn_params,
                                       stream_,
                                       cublas_wrapper_,
                                       allocator_,
-                                      is_free_buffer_after_forward_);
+                                      is_free_buffer_after_forward_,
+                                      quant_policy);
 }
 
 template<typename T>
@@ -122,6 +123,7 @@ void UnifiedDecoder<T>::forward(TensorMap* outputs, const TensorMap* inputs, con
     T* decoder_input_output    = inputs->getPtr<T>("decoder_input");
     T* decoder_output          = outputs->getPtr<T>("decoder_output");
     T* last_token_hidden_units = outputs->getPtr<T>("last_token_hidden_units");
+    T* decoder_quant_buf       = inputs->getPtr<T>("decoder_quant_buf", nullptr);
 
     {  // compute cumulative lengths
         h_cu_k_len_ = h_cu_q_len_ + batch_size + 1;
@@ -146,13 +148,35 @@ void UnifiedDecoder<T>::forward(TensorMap* outputs, const TensorMap* inputs, con
 
     /////////////////////////////////////////////
     /// RMSNorm
-    invokeRootMeanSquareNorm(decoder_output,
-                             decoder_input_output,
-                             weights->at(0)->self_attn_norm_weights,
-                             rmsnorm_eps_,
-                             token_num,
-                             hidden_units_,
-                             stream_);
+    if (quant_policy_ & QuantPolicy::kGEMMQUANT) {
+        invokeGeneralLayerNormWithFP8PerChnQuantization(
+            decoder_output,
+            decoder_input_output,
+            weights->at(0)->self_attn_norm_weights,
+            (T*)nullptr,
+            rmsnorm_eps_,
+            token_num,
+            hidden_units_,
+            const_cast<LlamaAttentionWeight<T>*>(&(weights->at(0)->self_attn_weights))->qkv.input_scales_per_channel,
+            stream_);
+    }
+    else {
+        invokeRootMeanSquareNorm(decoder_output,
+                                 decoder_input_output,
+                                 weights->at(0)->self_attn_norm_weights,
+                                 rmsnorm_eps_,
+                                 token_num,
+                                 hidden_units_,
+                                 stream_);
+    }
+
+    // invokeRootMeanSquareNorm(decoder_output,
+    //                          decoder_input_output,
+    //                          weights->at(0)->self_attn_norm_weights,
+    //                          rmsnorm_eps_,
+    //                          token_num,
+    //                          hidden_units_,
+    //                          stream_);
     sync_check_cuda_error();
 
     count_and_fix(decoder_output, token_num * hidden_units_, Concat("norm0", 0), 2);
@@ -161,9 +185,12 @@ void UnifiedDecoder<T>::forward(TensorMap* outputs, const TensorMap* inputs, con
 
         // Compare(decoder_output, token_num * hidden_units_, "attn_input", kCmpRead, stream_);
 
+        auto decoder_buf =
+            ((quant_policy_ & QuantPolicy::kGEMMQUANT) && layer > 0) ? decoder_quant_buf : decoder_output;
         /////////////////////////////////////////////
         /// self-attention
-        forwardSelfAttn(decoder_output,  //
+        /// w4fp8 quant, forwardSelfAttn input fp8, output fp16
+        forwardSelfAttn(decoder_buf,  //self_attn in and out
                         outputs,
                         inputs,
                         token_num,
@@ -171,16 +198,49 @@ void UnifiedDecoder<T>::forward(TensorMap* outputs, const TensorMap* inputs, con
                         layer,
                         &weights->at(layer)->self_attn_weights);
 
-        count_and_fix(decoder_output, token_num * hidden_units_, Concat("attn_block", layer), 2);
+        count_and_fix(decoder_buf, token_num * hidden_units_, Concat("attn_block", layer), 2);
 
-        invokeFusedAddBiasResidualRMSNorm(decoder_input_output,
-                                          decoder_output,
-                                          weights->at(layer)->self_attn_weights.output.bias,
-                                          weights->at(layer)->ffn_norm_weights,
-                                          rmsnorm_eps_,
-                                          token_num,
-                                          hidden_units_,
-                                          stream_);
+        if (quant_policy_ & QuantPolicy::kGEMMQUANT) {
+            invokeGeneralAddResidualLayerNormWithFP8PerChnQuantization(
+                decoder_input_output,  // residual in and out (add input(decoder_buf) as residual)
+                decoder_output,        // norm output
+                decoder_buf,           // input
+                weights->at(layer)->ffn_norm_weights,
+                rmsnorm_eps_,
+                token_num,
+                hidden_units_,
+                const_cast<LlamaFfnWeight<T>*>(&(weights->at(layer)->ffn_weights))->gating.input_scales_per_channel,
+                stream_);
+            // TODO this fuse need gating and intermediate share same input per_chn scale, but not proced in modelopt,
+            // if cannot be fused, need to apply per-chn quant inside ffn(gating and intermediate)
+            // const_cast<LlamaFfnWeight<T>*>(&(weights->at(layer)->ffn_weights))->gating.scale_per_token =
+            //     per_token_scale_;
+            // const_cast<LlamaFfnWeight<T>*>(&(weights->at(layer)->ffn_weights))->intermediate.scale_per_token =
+            //     per_token_scale_;
+            // const_cast<LlamaFfnWeight<T>*>(&(weights->at(layer)->ffn_weights))
+            //     ->fused_gating_intermediate.scale_per_token = per_token_scale_;
+        }
+        else {
+            // invokeFusedAddBiasResidualRMSNorm add seperate in(decoder_buf) and out(decoder_output) imp
+            invokeFusedAddBiasResidualRMSNorm(decoder_input_output, // residual in and out
+                                              decoder_buf, // input
+                                              decoder_output, // output
+                                              weights->at(layer)->self_attn_weights.output.bias,
+                                              weights->at(layer)->ffn_norm_weights,
+                                              rmsnorm_eps_,
+                                              token_num,
+                                              hidden_units_,
+                                              stream_);
+        }
+
+        // invokeFusedAddBiasResidualRMSNorm(decoder_input_output,
+        //                                   decoder_output,
+        //                                   weights->at(layer)->self_attn_weights.output.bias,
+        //                                   weights->at(layer)->ffn_norm_weights,
+        //                                   rmsnorm_eps_,
+        //                                   token_num,
+        //                                   hidden_units_,
+        //                                   stream_);
         sync_check_cuda_error();
 
         count_and_fix(decoder_input_output, token_num * hidden_units_, Concat("residual0", layer), 2);
@@ -200,18 +260,57 @@ void UnifiedDecoder<T>::forward(TensorMap* outputs, const TensorMap* inputs, con
 
         count_and_fix(decoder_output, token_num * hidden_units_, Concat("ffn_block", layer), 2);
 
+
         const bool is_last_layer = layer == num_layer_ - 1;
 
         auto scale_weight = !is_last_layer ? weights->at(layer + 1)->self_attn_norm_weights :
                                              inputs->at("output_norm_weight").getPtr<T>();
-        invokeFusedAddBiasResidualRMSNorm(decoder_input_output,
-                                          decoder_output,
-                                          weights->at(layer)->ffn_weights.output.bias,
-                                          scale_weight,
-                                          rmsnorm_eps_,
-                                          token_num,
-                                          hidden_units_,
-                                          stream_);
+        if (num_layer_ > 1) {
+            if ((quant_policy_ & QuantPolicy::kGEMMQUANT) && !is_last_layer) {
+                invokeGeneralAddResidualLayerNormWithFP8PerChnQuantization(
+                    decoder_input_output,
+                    decoder_quant_buf,
+                    decoder_output,
+                    scale_weight,
+                    rmsnorm_eps_,
+                    token_num,
+                    hidden_units_,
+                    const_cast<LlamaAttentionWeight<T>*>(&(weights->at(layer + 1)->self_attn_weights))
+                        ->qkv.input_scales_per_channel,
+                    stream_);
+                // const_cast<LlamaAttentionWeight<T>*>(&(weights->at(layer +
+                // 1)->self_attn_weights))->qkv.scale_per_token =
+                //     per_token_scale_;
+            }
+            else {
+                invokeFusedAddBiasResidualRMSNorm(decoder_input_output,
+                                                  decoder_output,
+                                                  weights->at(layer)->ffn_weights.output.bias,
+                                                  scale_weight,
+                                                  rmsnorm_eps_,
+                                                  token_num,
+                                                  hidden_units_,
+                                                  stream_);
+            }
+        }
+        else {
+            invokeAddResidual(decoder_output, decoder_input_output, token_num, hidden_units_, stream_);
+        }
+
+        // const bool is_last_layer = layer == num_layer_ - 1;
+
+        // auto scale_weight = !is_last_layer ? weights->at(layer + 1)->self_attn_norm_weights :
+        //                                      inputs->at("output_norm_weight").getPtr<T>();
+        // invokeFusedAddBiasResidualRMSNorm(decoder_input_output,
+        //                                   decoder_output,
+        //                                   weights->at(layer)->ffn_weights.output.bias,
+        //                                   scale_weight,
+        //                                   rmsnorm_eps_,
+        //                                   token_num,
+        //                                   hidden_units_,
+        //                                   stream_);
+
+
         sync_check_cuda_error();
 
         count_and_fix(decoder_input_output, token_num * hidden_units_, Concat("residual1", layer), 2);

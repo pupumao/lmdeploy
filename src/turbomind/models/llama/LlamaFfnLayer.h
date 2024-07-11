@@ -38,7 +38,8 @@ public:
                   cudaStream_t     stream,
                   cublasMMWrapper* cublas_wrapper,
                   IAllocator*      allocator,
-                  bool             is_free_buffer_after_forward):
+                  bool             is_free_buffer_after_forward,
+                  int              quant_policy):
         head_num_(head_num),
         size_per_head_(size_per_head),
         inter_size_(inter_size / tensor_para.world_size_),
@@ -47,7 +48,8 @@ public:
         linear_(cublas_wrapper, stream),
         allocator_(allocator),
         tensor_para_(tensor_para),
-        is_free_buffer_after_forward_(is_free_buffer_after_forward)
+        is_free_buffer_after_forward_(is_free_buffer_after_forward),
+        quant_policy_(quant_policy)
     {
     }
 
@@ -76,6 +78,9 @@ private:
 
     T* gating_buf_{};
     T* inter_buf_{};
+    T* gating_buf_quant_dst_{};
+    // float* output_gemm_per_token_scale_ = nullptr;
+    const int quant_policy_;
 
     NcclParam tensor_para_;
 

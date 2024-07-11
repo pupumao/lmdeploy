@@ -32,6 +32,8 @@
 #include "src/turbomind/utils/cuda_utils.h"
 #include "src/turbomind/utils/debug_utils.h"
 #include "src/turbomind/utils/logger.h"
+#include "src/turbomind/kernels/quant_kernels.h"
+
 #include <algorithm>
 #include <math.h>
 
@@ -58,6 +60,11 @@ void UnifiedAttentionLayer<T>::allocateBuffer(size_t            q_count,
     }
 
     qkv_buf_3_ = (T*)allocator_->reMalloc(qkv_buf_3_, sizeof(T) * q_count * local_head_num_ * size_per_head_, false);
+
+    if (quant_policy_ & QuantPolicy::kGEMMQUANT) {
+        out_proj_input_quant_ = (T*)allocator_->reMalloc(
+            out_proj_input_quant_, sizeof(__nv_fp8_e4m3) * q_count * local_head_num_ * size_per_head_, false);
+    }
 
     // Pad the tmp buffer for linear KV cache by `MAX_CTA_S` to avoid illegal accesses
     tmp_kv_buf_ = (T*)allocator_->reMalloc(
@@ -104,6 +111,10 @@ void UnifiedAttentionLayer<T>::freeBuffer()
         allocator_->free((void**)&qkv_buf_);
         allocator_->free((void**)&qkv_buf_3_);
         allocator_->free((void**)&tmp_kv_buf_);
+
+        if (quant_policy_ & QuantPolicy::kGEMMQUANT) {
+            allocator_->free((void**)(&out_proj_input_quant_));
+        }
 
         is_allocate_buffer_ = false;
     }
@@ -307,7 +318,25 @@ inline void UnifiedAttentionLayer<T>::forward(TensorMap* outputs, const TensorMa
 
     //////////////////////////////////////////////
     /// output gemm <Bs,HD> -> <Bs,HD>
-    linear_.forward(attention_out, qkv_buf_3_, token_num, weights->output, LlamaLinear<T>::kGemm, lora_mask);
+    if (quant_policy_ & QuantPolicy::kGEMMQUANT) {
+        invokeDynamicPerChnQuantization(qkv_buf_3_,
+                                        (__nv_fp8_e4m3*)out_proj_input_quant_,
+                                        token_num,
+                                        local_head_num_ * size_per_head_,
+                                        const_cast<LlamaAttentionWeight<T>*>(weights)->output.input_scales_per_channel,
+                                        stream_);
+        // const_cast<LlamaAttentionWeight<T>*>(weights)->output.scale_per_token = dense_input_scale_;
+        // TODO linear op LayerType need tobe ensure
+        // TODO lora_mask process need tobe ensure
+        linear_.forward(attention_out, out_proj_input_quant_, token_num, weights->output, LlamaLinear<T>::kGemm, lora_mask);
+    }
+    else {
+        // TODO linear op LayerType need tobe ensure
+        // TODO lora_mask process need tobe ensure
+        linear_.forward(attention_out, qkv_buf_3_, token_num, weights->output, LlamaLinear<T>::kGemm, lora_mask);
+    }
+
+    // linear_.forward(attention_out, qkv_buf_3_, token_num, weights->output, LlamaLinear<T>::kGemm, lora_mask);
 
     // ++count;
 

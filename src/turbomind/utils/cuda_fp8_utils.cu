@@ -15,6 +15,7 @@
  */
 
 #include "cuda_fp8_utils.h"
+#include "stdio.h"
 
 namespace turbomind {
 #ifdef ENABLE_FP8

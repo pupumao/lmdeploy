@@ -206,6 +206,8 @@ private:
     // context decoding temp buffers
     T*   context_decoder_input_buf_{};
     T*   context_decoder_output_buf_{};
+    T*   context_decoder_quant_buf_{};
+
     int* context_decoder_ids_buf_{};
     int* input_ids_buf_{};
     // lengths
