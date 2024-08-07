@@ -129,6 +129,11 @@ void freeWeights(LlamaDenseWeight<T>& weights)
     weights.bias             = nullptr;
     weights.scales_and_zeros = nullptr;
 
+    if(weights.type== WeightType::kW4AFP8){
+        cudaFree(weights.input_scales_per_channel);
+        weights.input_scales_per_channel = nullptr;
+    }
+
     {
         cudaFree(weights.lora.a);
         cudaFree(weights.lora.b);
@@ -154,6 +159,10 @@ void mallocWeights(LlamaDenseWeight<T>& weights, bool bias)
         deviceMemSetZero((int*)weights.kernel, weights.input_dims * weights.output_dims / factor);
         // interleaved scales/zeros
         deviceMalloc((T**)&weights.scales_and_zeros, weights.input_dims / weights.group_size * weights.output_dims * 2);
+        if(weights.type== WeightType::kW4AFP8){
+            // TODO tobe ensured for tp case
+            deviceMalloc((T**)&weights.input_scales_per_channel, weights.input_dims * 2);
+        }
     }
 
     if (weights.lora.r > 0) {
@@ -201,6 +210,14 @@ void getWeightTensor(LlamaDenseWeight<T>& weights, bool bias, const std::string&
                              getTensorType<T>(),
                              {weights.input_dims / weights.group_size * weights.output_dims * 2 * sizeof(T)},
                              weights.scales_and_zeros});
+        if(weights.type== WeightType::kW4AFP8){
+            // TODO tobe ensured for tp case
+            output.insert(get_name("input_scales"),
+                        Tensor{MEMORY_GPU,
+                                getTensorType<T>(),
+                                {weights.input_dims * 2 * sizeof(T)},
+                                weights.input_scales_per_channel});
+        }
     }
 
     if (weights.lora.r) {
@@ -327,6 +344,10 @@ void loadWeights(LlamaDenseWeight<T>& w,
         const size_t group_count = w.group_size > 0 ? dim0 / w.group_size : 1;
 
         loadWeightFromBin((half*)w.scales_and_zeros, {group_count, dim1 * 2}, prefix + ".scales_zeros", type, {});
+        if(w.type== WeightType::kW4AFP8){
+            // TODO tobe ensured for tp case
+            loadWeightFromBin((half*)w.input_scales_per_channel, {1, dim0 * 2}, prefix + ".input_scales", type, {});
+        }
     }
 }
 

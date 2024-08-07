@@ -7,6 +7,7 @@ from .internlm2 import InternLM2AwqModel, InternLM2Model  # noqa: F401
 from .internvl import InternVLModel  # noqa: F401
 from .llama import LlamaModel  # noqa: F401
 from .llama_awq import LlamaAwqModel  # noqa: F401
+from .llama_w4afp8 import LlamaW4Afp8Model
 from .meta_llama import MetaLlamaModel  # noqa: F401
 from .minicpmv import MiniCPMVModel  # noqa: F401
 from .minicpmv_awq import MiniCPMVAwqModel  # noqa: F401

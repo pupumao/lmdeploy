@@ -259,6 +259,9 @@ LlamaTritonModel<T>::LlamaTritonModel(size_t      tensor_para_size,
     else if (weight_type_str == "int4") {
         weight_type_ = ft::WeightType::kINT4;
     }
+    else if (weight_type_str == 'w4afp8') {
+        weight_type_ = ft::WeightType::kW4AFP8;
+    }
     else {
         std::cout << "[ERROR] Unsupported weight type: '" << weight_type_str << "'\n";
         ft::FT_CHECK(0);

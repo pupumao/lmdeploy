@@ -17,7 +17,7 @@ from ..supported_models import SUPPORTED_ARCHS, is_supported
 from .source_model.base import INPUT_MODELS
 from .target_model.base import OUTPUT_MODELS, TurbomindModelConfig
 
-SUPPORTED_FORMATS = ['meta_llama', 'hf', 'awq', None]
+SUPPORTED_FORMATS = ['meta_llama', 'hf', 'awq', 'w4afp8', None]
 
 
 def get_package_root_path():
@@ -39,6 +39,9 @@ def get_input_model_registered_name(model_path: str, model_format: str):
     register_name = SUPPORTED_ARCHS[arch]
     if model_format == 'awq':
         register_name = register_name + '-awq'
+    elif model_format == 'w4afp8':
+        assert register_name=='llama', "w4afp8 only for llama right now"
+        register_name = register_name+ '-w4afp8'
     return register_name
 
 
@@ -147,6 +150,10 @@ def get_output_model_registered_name_and_config(model_path: str,
             register_name = 'plora-w4' \
                 if turbomind_model_arch == 'xcomposer2' else 'w4'
             group_size = 128 if group_size == 0 else group_size
+        elif model_format == 'w4afp8':
+            weight_type = 'w4afp9'
+            group_size = 128 if group_size == 0 else group_size
+            register_name = 'w4afp8'
         else:
             torch_dtype = getattr(model_config, 'torch_dtype', 'float16')
             # Qwen-1 didn't set torch_dtype. It used bf16 as default
